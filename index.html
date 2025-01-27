@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boids</title>
+</head>
+<body style="
+  position: fixed;
+  
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  
+  margin: 0;
+  padding: 0;
+  
+  display: flex;
+  flex-flow: row;
+
+  color: white;
+">
+
+<section style="
+  position: absolute;
+
+  padding: 5px;
+
+  opacity: 50%;
+">  
+  <form data-role="dashboard" style="
+    display: flex;
+    flex-flow: column;
+
+    gap: 5px;
+  ">
+    <section>
+      <label>Boid Amount</label>
+      <input type="number" min="1" max="1000" step="1" name="boidAmount">
+    </section>
+    
+    <section>
+      <label>Boid Radius</label>
+      <input type="number" min="1" max="150" step="1" name="boidRadius">
+    </section>
+
+    <section>
+      <label>Boid Opacity (%)</label>
+      <input type="number" min="1" max="100" step="1" name="boidOpacity">
+    </section>
+
+    <section>
+      <label>Update Rate</label>
+      <input type="number" min="0" max="1000" step="5" name="updateRate">
+    </section>
+
+    <section>
+      <label>Max Velocity</label>
+      <input type="number" min="1" max="100" step="0.00001" name="maxVelocity">
+    </section>
+
+    <section>
+      <label>Perception Radius</label>
+      <input type="number" min="0" max="500" step="1" name="perceptionRadius">
+    </section>
+
+    <section>
+      <label>Separation Factor</label>
+      <input type="number" min="0" max="100" step="0.00001" name="separationFactor">
+    </section>
+
+    <section>
+      <label>Alignment Factor</label>
+      <input type="number" min="0" max="100" step="0.00001" name="alignmentFactor">
+    </section>
+
+    <section>
+      <label>Cohesion Factor</label>
+      <input type="number" min="0" max="100" step="0.00001" name="cohesionFactor">
+    </section>
+
+    <section>
+      <label>Start From Center</label>
+      <input type="checkbox" name="startFromCenter">
+    </section>
+
+      <button type="submit">
+        Start
+      </button>
+  </form>
+</section>
+
+<canvas data-role="display"></canvas>
+
+<script type="module">
+
+const DEFAULT_BOID_AMOUNT = "200"
+const DEFAULT_BOID_RADIUS = "15"
+const DEFAULT_BOID_OPACITY = "25"
+const DEFAULT_UPDATE_RATE = "20"
+const DEFAULT_MAX_VELOCITY = "10"
+const DEFAULT_PERCEPTION_RADIUS = "120"
+const DEFAULT_SEPARATION_FACTOR = "0.0025"
+const DEFAULT_ALIGNMENT_FACTOR = "0.0025"
+const DEFAULT_COHESION_FACTOR = "0.0175"
+const DEFAULT_START_FROM_CENTER = "off"
+
+const main = async () => {
+  const display = document.querySelector("[data-role=display]")
+
+  await resetDisplayDimensions(display)
+  window.addEventListener("resize", async () => await resetDisplayDimensions(display))
+
+  const renderingContext = display.getContext("2d")
+  const dashboard = document.querySelector("[data-role=dashboard]")
+  const params = new URLSearchParams(window.location.search)
+
+  const boidAmount = parseInt(params.get("boidAmount") || DEFAULT_BOID_AMOUNT)
+  const boidRadius = parseInt(params.get("boidRadius") || DEFAULT_BOID_RADIUS)
+  const boidOpacity = parseFloat(params.get("boidOpacity") || DEFAULT_BOID_OPACITY)
+  const updateRate = parseInt(params.get("updateRate") || DEFAULT_UPDATE_RATE)
+  const maxVelocity = parseFloat(params.get("maxVelocity") || DEFAULT_MAX_VELOCITY)
+  const perceptionRadius = parseInt(params.get("perceptionRadius") || DEFAULT_PERCEPTION_RADIUS)
+  const separationFactor = parseFloat(params.get("separationFactor") || DEFAULT_SEPARATION_FACTOR)
+  const alignmentFactor = parseFloat(params.get("alignmentFactor") || DEFAULT_ALIGNMENT_FACTOR)
+  const cohesionFactor = parseFloat(params.get("cohesionFactor") || DEFAULT_COHESION_FACTOR)
+  const startFromCenter = (params.get("startFromCenter") || DEFAULT_START_FROM_CENTER) === "on"
+
+  dashboard.elements.boidAmount.value = boidAmount
+  dashboard.elements.boidRadius.value = boidRadius
+  dashboard.elements.boidOpacity.value = boidOpacity
+  dashboard.elements.updateRate.value = updateRate
+  dashboard.elements.maxVelocity.value = maxVelocity
+  dashboard.elements.perceptionRadius.value = perceptionRadius
+  dashboard.elements.separationFactor.value = separationFactor
+  dashboard.elements.alignmentFactor.value = alignmentFactor
+  dashboard.elements.cohesionFactor.value = cohesionFactor
+  dashboard.elements.startFromCenter.checked = startFromCenter
+
+  const flock = startFromCenter ? 
+    await generateCenteredFlock(
+      boidAmount, 
+      [display.width, display.height],
+      maxVelocity
+    ) :
+    await generateFlock(
+      boidAmount, 
+      [display.width, display.height],
+      maxVelocity
+    )
+
+  render(flock, display, renderingContext, dashboard.elements)
+  update(flock, display, dashboard.elements)
+}
+
+const generateFlock = async (
+  boidAmount, 
+  [displayWidth, displayHeight],
+  maxVelocity
+) => 
+  Array.from({ length: boidAmount }, () => 
+    new Boid(
+      [
+        Math.random() * displayWidth,
+        Math.random() * displayHeight
+      ], [
+        getInRangeRandom(-maxVelocity, maxVelocity),
+        getInRangeRandom(-maxVelocity, maxVelocity),
+      ]
+    )
+  )
+
+const generateCenteredFlock = async (
+  boidAmount, 
+  [displayWidth, displayHeight],
+  maxVelocity
+) => 
+  Array.from({ length: boidAmount }, () => 
+    new Boid(
+      [displayWidth / 2, displayHeight / 2], [
+        getInRangeRandom(-maxVelocity, maxVelocity),
+        getInRangeRandom(-maxVelocity, maxVelocity),
+      ]
+    )
+  )
+
+const render = async (flock, display, renderingContext, dashboardElements) => {
+  const boidRadius = parseFloat(dashboardElements.boidRadius.value)
+  const boidOpacity = parseFloat(dashboardElements.boidOpacity.value)
+
+  renderingContext.clearRect(0 , 0, display.width, display.height)
+
+  renderingContext.globalAlpha = 1
+
+  renderingContext.fillStyle = "black"
+  renderingContext.fillRect(0 , 0, display.width, display.height)
+
+  renderingContext.globalAlpha = boidOpacity / 100
+
+  for (const boid of flock) {
+    renderingContext.fillStyle = "white"
+    renderingContext.beginPath()
+    renderingContext.arc(boid.position.x, boid.position.y, boidRadius, 0, 2 * Math.PI)
+    renderingContext.fill()
+  }
+
+  requestAnimationFrame(() => render(flock, display, renderingContext, dashboardElements))
+}
+
+const update = async (flock, display, dashboardElements) => {
+  const snapshot = flock.map((boid) => 
+    new Boid(
+      [boid.position.x, boid.position.y],
+      [boid.velocity.x, boid.velocity.y]
+    )
+  )
+
+  const params = await getVariableParams(dashboardElements)
+
+  flock.forEach((boid) => 
+    boid.update(
+      snapshot, 
+      [display.width, display.height], 
+      params.maxVelocity, 
+      params.perceptionRadius, 
+      params.separationFactor, 
+      params.alignmentFactor,
+      params.cohesionFactor
+    )
+  )
+
+  setTimeout(() => update(flock, display, dashboardElements), params.updateRate)
+}
+
+const resetDisplayDimensions = async (display) => {
+  display.width = document.body.clientWidth * 2
+  display.height = document.body.clientHeight * 2
+}
+
+const getVariableParams = (dashboardElements) => ({
+  updateRate: parseInt(dashboardElements.updateRate.value),
+  maxVelocity: parseInt(dashboardElements.maxVelocity.value),
+  perceptionRadius: parseInt(dashboardElements.perceptionRadius.value),
+  separationFactor: parseFloat(dashboardElements.separationFactor.value),
+  alignmentFactor: parseFloat(dashboardElements.alignmentFactor.value),
+  cohesionFactor: parseFloat(dashboardElements.cohesionFactor.value),
+})
+
+const getInRangeRandom = (min, max) => 
+  Math.random() * (max - min) + min
+
+class Boid {
+  constructor ([posX = 0, posY = 0], [velX = 0, velY = 0]) {
+    this.position = new Vec(posX, posY)
+    this.velocity = new Vec(velX, velY)
+  }
+
+  update (
+    flock, 
+    displayDimensions, 
+    maxVelocity, 
+    perceptionRadius, 
+    separationFactor, 
+    alignmentFactor,
+    cohesionFactor
+  ) {
+    const separation = this.getSeparation(flock, perceptionRadius, separationFactor)
+    const alignment = this.getAlignment(flock, perceptionRadius, alignmentFactor)
+    const cohesion = this.getCohesion(flock, perceptionRadius, cohesionFactor)
+    
+    this.velocity.add(separation)
+    this.velocity.add(alignment)
+    this.velocity.add(cohesion)
+
+    this.velocity.limit(maxVelocity)
+
+    this.position.add(this.velocity)
+
+    this.limitEdges(displayDimensions)
+  }
+
+  getSeparation (flock, perceptionRadius, separationFactor) {
+    const separation = new Vec()
+
+    for (const boid of flock) {
+      const distance = this.position.getDistanceTo(boid.position)
+
+      if (distance > perceptionRadius) 
+        continue
+
+      separation.add(this.position)
+      separation.subtract(boid.position)
+    }
+
+    separation.multiplyByValue(separationFactor)
+
+    return separation
+  }
+
+  getAlignment (flock, perceptionRadius, alignmentFactor) {
+    const alignment = new Vec()
+    let neighborCount = 0
+
+    for (const boid of flock) {
+      const distance = this.position.getDistanceTo(boid.position)
+
+      if (distance > perceptionRadius) 
+        continue
+
+      alignment.add(boid.velocity)
+      neighborCount += 1
+    }
+
+    if (neighborCount > 0) 
+      alignment.divideByValue(neighborCount)
+
+    alignment.subtract(this.velocity)
+    alignment.multiplyByValue(alignmentFactor)
+
+    return alignment
+  }
+
+  getCohesion (flock, perceptionRadius, cohesionFactor) {
+    const cohesion = new Vec()
+    let neighborCount = 0
+
+    for (const boid of flock) {
+      const distance = this.position.getDistanceTo(boid.position)
+
+      if (distance > perceptionRadius) 
+        continue
+
+      cohesion.add(boid.position)
+      neighborCount += 1
+    }
+
+    if (neighborCount > 0)
+      cohesion.divideByValue(neighborCount)
+
+    cohesion.subtract(this.position)
+    cohesion.multiplyByValue(cohesionFactor)
+
+    return cohesion
+  }
+
+  limitEdges ([displayWidth, displayHeight]) {
+    while (this.position.x > displayWidth)
+      this.position.x -= displayWidth
+
+    while (this.position.x < 0)
+      this.position.x += displayWidth
+
+    while (this.position.y > displayHeight)
+      this.position.y -= displayHeight
+
+    while (this.position.y < 0)
+      this.position.y += displayHeight
+  }
+}
+
+class Vec {
+  constructor (x = 0, y = 0) {
+    this.x = x
+    this.y = y
+  }
+
+  add (vec) {
+    this.x += vec.x
+    this.y += vec.y
+  }
+
+  addValue (val) {
+    this.x += val
+    this.y += val
+  }
+
+  subtract (vec) {
+    this.x -= vec.x
+    this.y -= vec.y
+  }
+
+  subtractValue (vec) {
+    this.x -= val
+    this.y -= val
+  }
+
+  multiplyBy (vec) {
+    this.x *= vec.x
+    this.y *= vec.y
+  }
+
+  multiplyByValue (val) {
+    this.x *= val
+    this.y *= val
+  }
+
+  divideBy (vec) {
+    this.x /= vec.x
+    this.y /= vec.y
+  }
+
+  divideByValue (val) {
+    this.x /= val
+    this.y /= val
+  }
+
+  getDistanceTo (vec) {
+    return Math.sqrt((vec.x - this.x) * (vec.x - this.x) + (vec.y - this.y) * (vec.y - this.y))
+  }
+
+  limit (max) {
+    const magnitude = Math.sqrt(this.x ** 2 + this.y ** 2)
+
+    if (magnitude > max) {
+      const ratio = max / magnitude
+      this.x *= ratio
+      this.y *= ratio
+    }
+  }
+}
+
+await main()
+
+</script>
+
+</body>
+</html>
